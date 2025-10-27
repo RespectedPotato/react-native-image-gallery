@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactNative, { View, Animated, Easing, NativeModules } from 'react-native';
+import ReactNative, { View, Animated, Easing } from 'react-native';
 import Scroller from '../Scroller';
 import PropTypes from 'prop-types';
 import { createResponder } from '../GestureResponder';
@@ -33,6 +33,8 @@ export default class ViewTransformer extends React.Component {
         maxScale: 1,
         enableResistance: false
     };
+
+    innerViewRef = React.createRef();
 
     constructor (props) {
         super(props);
@@ -136,7 +138,7 @@ export default class ViewTransformer extends React.Component {
             <View
               {...this.props}
               {...gestureResponder}
-              ref={'innerViewRef'}
+              ref={this.innerViewRef}
               onLayout={this.onLayout}>
                  <View
                    style={{
@@ -164,8 +166,7 @@ export default class ViewTransformer extends React.Component {
     }
 
     measureLayout () {
-        let handle = ReactNative.findNodeHandle(this.refs['innerViewRef']);
-        NativeModules.UIManager.measure(handle, (x, y, width, height, pageX, pageY) => {
+        this.innerViewRef.current.measure((x, y, width, height, pageX, pageY) => {
             if (typeof pageX === 'number' && typeof pageY === 'number') { // avoid undefined values on Android devices
                 if (this.state.pageX !== pageX || this.state.pageY !== pageY) {
                     this.setState({ pageX: pageX, pageY: pageY });
