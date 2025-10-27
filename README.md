@@ -3,12 +3,12 @@
 ## Table of contents
 
 - [react-native-image-gallery](#react-native-image-gallery)
-    - [Table of contents](#table-of-contents)
-    - [Install](#install)
-    - [Usage example](#usage-example)
-    - [Remote and local images](#remote-and-local-images)
-    - [Props](#props)
-    - [Scroll state and events](#scroll-state-and-events)
+  - [Table of contents](#table-of-contents)
+  - [Install](#install)
+  - [Usage example](#usage-example)
+  - [Remote and local images](#remote-and-local-images)
+  - [Props](#props)
+  - [Scroll state and events](#scroll-state-and-events)
 
 >This used to be a fork of [ldn0x7dc/react-native-gallery](https://github.com/ldn0x7dc/react-native-gallery) but the original repo is no longer maintained, so here's our own repo. Props to [ldn0x7dc](https://github.com/ldn0x7dc) for his amazing work! 👏👏👏
 
