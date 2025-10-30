@@ -47,6 +47,7 @@ export default class ViewPager extends PureComponent {
     layoutChanged = false;
     activeGesture = false;
     gestureResponder = undefined;
+    innerFlatList = React.createRef()
 
     state = { width, height };
 
@@ -71,7 +72,7 @@ export default class ViewPager extends PureComponent {
                 }
             } else {
                 const curX = this.scroller.getCurrX();
-                this.refs['innerFlatList'] && this.refs['innerFlatList'].scrollToOffset({ offset: curX, animated: false });
+                this.innerFlatList.current && this.innerFlatList.current.scrollToOffset({ offset: curX, animated: false });
 
                 let position = Math.floor(curX / (this.state.width + this.props.pageMargin));
                 position = this.validPage(position);
@@ -222,8 +223,8 @@ export default class ViewPager extends PureComponent {
         if (immediate) {
             InteractionManager.runAfterInteractions(() => {
                 this.scroller.startScroll(this.scroller.getCurrX(), 0, finalX - this.scroller.getCurrX(), 0, 0);
-                this.refs['innerFlatList'] && this.refs['innerFlatList'].scrollToOffset({offset: finalX, animated: false});
-                this.refs['innerFlatList'] && this.refs['innerFlatList'].recordInteraction();
+                this.innerFlatList.current && this.innerFlatList.current.scrollToOffset({offset: finalX, animated: false});
+                this.innerFlatList.current && this.innerFlatList.current.recordInteraction();
             });
         } else {
             this.scroller.startScroll(this.scroller.getCurrX(), 0, finalX - this.scroller.getCurrX(), 0, 400);
@@ -318,7 +319,7 @@ export default class ViewPager extends PureComponent {
                 <FlatList
                   {...this.props.flatListProps}
                   style={[{ flex: 1 }, scrollViewStyle]}
-                  ref={'innerFlatList'}
+                  ref={this.innerFlatList}
                   keyExtractor={this.keyExtractor}
                   scrollEnabled={false}
                   horizontal={true}

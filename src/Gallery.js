@@ -44,6 +44,8 @@ export default class Gallery extends PureComponent {
     gestureResponder = undefined;
     isHorizontalScroll = undefined;
 
+    galleryViewPager = React.createRef()
+
     constructor (props) {
         super(props);
 
@@ -234,7 +236,7 @@ export default class Gallery extends PureComponent {
     }
 
     getViewPagerInstance () {
-        return this.refs['galleryViewPager'];
+        return this.galleryViewPager.current;
     }
 
     onPageSelected (page) {
@@ -300,7 +302,7 @@ export default class Gallery extends PureComponent {
             <ViewPager
               {...this.props}
               flatListProps={flatListProps}
-              ref={'galleryViewPager'}
+              ref={this.galleryViewPager}
               scrollViewStyle={this.props.scrollViewStyle}
               scrollEnabled={false}
               renderPage={this.renderPage}
