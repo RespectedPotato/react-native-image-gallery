@@ -20,6 +20,7 @@
         "__DEV__": false
     },
     "rules": {
+        "camelcase": "off",
         "indent": [2, 4],
         "generator-star-spacing": 0,
         "react/jsx-indent": [0, 4],
