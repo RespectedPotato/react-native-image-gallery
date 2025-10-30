@@ -57,7 +57,7 @@ export default class Gallery extends PureComponent {
         this.activeImageResponder = this.activeImageResponder.bind(this);
     }
 
-    componentWillMount () {
+    UNSAFE_componentWillMount () {
         let onResponderReleaseOrTerminate = (evt, gestureState) => {
             if (typeof this.props.onImageResponderReleaseOrTerminate === 'function'
                 && this.isHorizontalScroll === false) this.props.onImageResponderReleaseOrTerminate(evt, gestureState);
