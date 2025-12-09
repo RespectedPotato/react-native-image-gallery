@@ -1,5 +1,5 @@
 import React, { PureComponent } from 'react';
-import { View } from 'react-native';
+import { View, ViewStyle } from 'react-native';
 import { ViewPropTypes } from 'deprecated-react-native-prop-types';
 import PropTypes from 'prop-types';
 import { createResponder } from './libraries/GestureResponder';
@@ -15,7 +15,7 @@ export default class Gallery extends PureComponent {
         ...View.propTypes,
         images: PropTypes.arrayOf(PropTypes.object),
         initialPage: PropTypes.number,
-        scrollViewStyle: ViewPropTypes ? ViewPropTypes.style : View.propTypes.style,
+        scrollViewStyle: ViewPropTypes ? ViewPropTypes.style : ViewStyle,
         pageMargin: PropTypes.number,
         onPageSelected: PropTypes.func,
         onPageScrollStateChanged: PropTypes.func,
@@ -33,7 +33,8 @@ export default class Gallery extends PureComponent {
         removeClippedSubviews: true,
         imageComponent: undefined,
         scrollViewStyle: {},
-        flatListProps: DEFAULT_FLAT_LIST_PROPS
+        flatListProps: DEFAULT_FLAT_LIST_PROPS,
+        maxScale: 3,
     };
 
     imageRefs = new Map();
@@ -106,7 +107,7 @@ export default class Gallery extends PureComponent {
                     const dy = gestureState.moveY - gestureState.previousMoveY;
                     const dx = gestureState.moveX - gestureState.previousMoveX;
                     const offset = this.getViewPagerInstance().getScrollOffsetFromCurrentPage();
-                    
+
                     if (dx > 0 && offset > 0 && !this.shouldScrollViewPager(evt, gestureState)) {
                         if (dx > offset) { // active image responder
                             this.getViewPagerInstance().scrollByOffset(offset);
@@ -255,18 +256,19 @@ export default class Gallery extends PureComponent {
         const { onViewTransformed, onTransformGestureReleased, errorComponent, imageComponent } = this.props;
         return (
             <TransformableImage
-              onViewTransformed={((transform) => {
-                  onViewTransformed && onViewTransformed(transform, pageId);
-              })}
-              onTransformGestureReleased={((transform) => {
-                  // need the 'return' here because the return value is checked in ViewTransformer
-                  return onTransformGestureReleased && onTransformGestureReleased(transform, pageId);
-              })}
-              ref={((ref) => { this.imageRefs.set(pageId, ref); })}
-              key={'innerImage#' + pageId}
-              errorComponent={errorComponent}
-              imageComponent={imageComponent}
-              image={pageData}
+                onViewTransformed={((transform) => {
+                    onViewTransformed && onViewTransformed(transform, pageId);
+                })}
+                onTransformGestureReleased={((transform) => {
+                    // need the 'return' here because the return value is checked in ViewTransformer
+                    return onTransformGestureReleased && onTransformGestureReleased(transform, pageId);
+                })}
+                ref={((ref) => { this.imageRefs.set(pageId, ref); })}
+                key={'innerImage#' + pageId}
+                errorComponent={errorComponent}
+                imageComponent={imageComponent}
+                image={pageData}
+                maxScale={this.props.maxScale}
             />
         );
     }
@@ -300,18 +302,18 @@ export default class Gallery extends PureComponent {
 
         return (
             <ViewPager
-              {...this.props}
-              flatListProps={flatListProps}
-              ref={this.galleryViewPager}
-              scrollViewStyle={this.props.scrollViewStyle}
-              scrollEnabled={false}
-              renderPage={this.renderPage}
-              pageDataArray={images}
-              {...gestureResponder}
-              onPageSelected={this.onPageSelected}
-              onPageScrollStateChanged={this.onPageScrollStateChanged}
-              onPageScroll={this.props.onPageScroll}
-              removeClippedSubviews={this.props.removeClippedSubviews}
+                {...this.props}
+                flatListProps={flatListProps}
+                ref={this.galleryViewPager}
+                scrollViewStyle={this.props.scrollViewStyle}
+                scrollEnabled={false}
+                renderPage={this.renderPage}
+                pageDataArray={images}
+                {...gestureResponder}
+                onPageSelected={this.onPageSelected}
+                onPageScrollStateChanged={this.onPageScrollStateChanged}
+                onPageScroll={this.props.onPageScroll}
+                removeClippedSubviews={this.props.removeClippedSubviews}
             />
         );
     }
