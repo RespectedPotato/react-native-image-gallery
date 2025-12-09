@@ -1,339 +1,425 @@
-import React, { PureComponent } from 'react';
-import {
-    View,
-    FlatList,
-    InteractionManager,
-    Dimensions
-} from 'react-native';
-import { ViewPropTypes } from 'deprecated-react-native-prop-types';
-import PropTypes from 'prop-types';
+import React from 'react';
+import ReactNative, { View, Animated, Easing } from 'react-native';
 import Scroller from '../Scroller';
+import PropTypes from 'prop-types';
 import { createResponder } from '../GestureResponder';
+import { Rect, Transform, transformedRect, availableTranslateSpace, fitCenterRect, alignedRect, getTransform } from './TransformUtils';
 
-const MIN_FLING_VELOCITY = 0.5;
+export default class ViewTransformer extends React.Component {
+    static Rect = Rect;
+    static getTransform = getTransform;
 
-// Dimensions are only used initially.
-// onLayout should handle orientation swap.
-const { width, height } = Dimensions.get('window');
-
-export default class ViewPager extends PureComponent {
     static propTypes = {
-        ...View.propTypes,
-        initialPage: PropTypes.number,
-        pageMargin: PropTypes.number,
-        scrollViewStyle: ViewPropTypes ? ViewPropTypes.style : View.propTypes.style,
-        scrollEnabled: PropTypes.bool,
-        renderPage: PropTypes.func,
-        pageDataArray: PropTypes.array,
-        initialListSize: PropTypes.number,
-        removeClippedSubviews: PropTypes.bool,
-        onPageSelected: PropTypes.func,
-        onPageScrollStateChanged: PropTypes.func,
-        onPageScroll: PropTypes.func,
-        flatListProps: PropTypes.object
+        enableTransform: PropTypes.bool,
+        enableScale: PropTypes.bool,
+        enableTranslate: PropTypes.bool,
+        maxOverScrollDistance: PropTypes.number,
+        maxScale: PropTypes.number,
+        contentAspectRatio: PropTypes.number,
+        enableResistance: PropTypes.bool,
+        onViewTransformed: PropTypes.func,
+        onTransformGestureReleased: PropTypes.func,
+        onSingleTapConfirmed: PropTypes.func,
+        onLayout: PropTypes.func,
+        onTransformStart: PropTypes.func,
+        children: PropTypes.node
     };
 
     static defaultProps = {
-        initialPage: 0,
-        pageMargin: 0,
-        scrollEnabled: true,
-        pageDataArray: [],
-        initialListSize: 10,
-        removeClippedSubviews: true,
-        flatListProps: {}
+        maxOverScrollDistance: 20,
+        enableScale: true,
+        enableTranslate: true,
+        enableTransform: true,
+        enableResistance: false
     };
 
-    currentPage = undefined; // Do not initialize to make onPageSelected(0) be dispatched
-    layoutChanged = false;
-    activeGesture = false;
-    gestureResponder = undefined;
-    innerFlatList = React.createRef()
-
-    state = { width, height };
+    innerViewRef = React.createRef();
 
     constructor (props) {
         super(props);
+        this.state = {
+            // transform state
+            scale: 1,
+            translateX: 0,
+            translateY: 0,
+            // animation state
+            animator: new Animated.Value(0),
+            // layout
+            width: 0,
+            height: 0,
+            pageX: 0,
+            pageY: 0
+        };
+        this._viewPortRect = new Rect(); // A holder to avoid new too much
 
-        this.onLayout = this.onLayout.bind(this);
-        this.renderRow = this.renderRow.bind(this);
-        this.onResponderGrant = this.onResponderGrant.bind(this);
         this.onResponderMove = this.onResponderMove.bind(this);
+        this.onLayout = this.onLayout.bind(this);
+        this.cancelAnimation = this.cancelAnimation.bind(this);
+        this.contentRect = this.contentRect.bind(this);
+        this.onResponderGrant = this.onResponderGrant.bind(this);
+        this.transformedContentRect = this.transformedContentRect.bind(this);
+        this.animate = this.animate.bind(this);
         this.onResponderRelease = this.onResponderRelease.bind(this);
-        this.getItemLayout = this.getItemLayout.bind(this);
 
-        this.scroller = this.createScroller();
-    }
-
-    createScroller () {
-        return new Scroller(true, (dx, dy, scroller) => {
+        this.scroller = new Scroller(true, (dx, dy, scroller) => {
             if (dx === 0 && dy === 0 && scroller.isFinished()) {
-                if (!this.activeGesture) {
-                    this.onPageScrollStateChanged('idle');
-                }
-            } else {
-                const curX = this.scroller.getCurrX();
-                this.innerFlatList.current && this.innerFlatList.current.scrollToOffset({ offset: curX, animated: false });
-
-                let position = Math.floor(curX / (this.state.width + this.props.pageMargin));
-                position = this.validPage(position);
-                let offset = (curX - this.getScrollOffsetOfPage(position)) / (this.state.width + this.props.pageMargin);
-                let fraction = (curX - this.getScrollOffsetOfPage(position) - this.props.pageMargin) / this.state.width;
-                if (fraction < 0) {
-                    fraction = 0;
-                }
-                this.props.onPageScroll && this.props.onPageScroll({
-                    position, offset, fraction
-                });
+                this.animateBounce();
+                return;
             }
-        });
-    }
 
-    UNSAFE_componentWillMount () {
+            this.updateTransform({
+                translateX: this.state.translateX + dx / this.state.scale,
+                translateY: this.state.translateY + dy / this.state.scale
+            });
+        });
         this.gestureResponder = createResponder({
             onStartShouldSetResponder: (evt, gestureState) => true,
-            onResponderGrant: this.onResponderGrant,
-            onResponderMove: this.onResponderMove,
-            onResponderRelease: this.onResponderRelease,
-            onResponderTerminate: this.onResponderRelease
+            onMoveShouldSetResponderCapture: (evt, gestureState) => true,
+            // onMoveShouldSetResponder: this.handleMove,
+            onResponderMove: this.onResponderMove.bind(this),
+            onResponderGrant: this.onResponderGrant.bind(this),
+            onResponderRelease: this.onResponderRelease.bind(this),
+            onResponderTerminate: this.onResponderRelease.bind(this),
+            onResponderTerminationRequest: (evt, gestureState) => false, // Do not allow parent view to intercept gesture
+            onResponderSingleTapConfirmed: (evt, gestureState) => {
+                this.props.onSingleTapConfirmed && this.props.onSingleTapConfirmed();
+            }
         });
     }
 
-    componentDidMount () {
-        // FlatList is set to render at initialPage.
-        // The scroller we use is not aware of this.
-        // Let it know by simulating most of what happens in scrollToPage()
-        this.onPageScrollStateChanged('settling');
+    viewPortRect () {
+        this._viewPortRect.set(0, 0, this.state.width, this.state.height);
+        return this._viewPortRect;
+    }
 
-        const page = this.validPage(this.props.initialPage);
-        this.onPageChanged(page);
+    contentRect () {
+        let rect = this.viewPortRect().copy();
+        if (this.props.contentAspectRatio && this.props.contentAspectRatio > 0) {
+            rect = fitCenterRect(this.props.contentAspectRatio, rect);
+        }
+        return rect;
+    }
 
-        const finalX = this.getScrollOffsetOfPage(page);
-        this.scroller.startScroll(this.scroller.getCurrX(), 0, finalX - this.scroller.getCurrX(), 0, 0);
-        
-        requestAnimationFrame(() => {
-            // this is here to work around a bug in FlatList, as discussed here
-            // https://github.com/facebook/react-native/issues/1831
-            // (and solved here https://github.com/facebook/react-native/commit/03ae65bc ?)
-            this.scrollByOffset(1);
-            this.scrollByOffset(-1);
+    transformedContentRect () {
+        let rect = transformedRect(this.viewPortRect(), this.currentTransform());
+        if (this.props.contentAspectRatio && this.props.contentAspectRatio > 0) {
+            rect = fitCenterRect(this.props.contentAspectRatio, rect);
+        }
+        return rect;
+    }
+
+    currentTransform () {
+        return new Transform(this.state.scale, this.state.translateX, this.state.translateY);
+    }
+
+    componentDidUpdate (prevProps, prevState) {
+        this.props.onViewTransformed && this.props.onViewTransformed({
+            scale: this.state.scale,
+            translateX: this.state.translateX,
+            translateY: this.state.translateY
         });
     }
 
-    componentDidUpdate (prevProps) {
-        if (this.layoutChanged) {
-            this.layoutChanged = false;
-            if (typeof this.currentPage === 'number') {
-                this.scrollToPage(this.currentPage, true);
-            }
-        } else if (this.currentPage + 1 >= this.props.pageDataArray.length &&
-            this.props.pageDataArray.length !== prevProps.pageDataArray.length) {
-            this.scrollToPage(this.props.pageDataArray.length, true);
-        }
-    }
-
-    onLayout (e) {
-        let { width, height } = e.nativeEvent.layout;
-        let sizeChanged = this.state.width !== width || this.state.height !== height;
-        if (width && height && sizeChanged) {
-            this.layoutChanged = true;
-            this.setState({ width, height });
-        }
-    }
-
-    onResponderGrant (evt, gestureState) {
-        // this.scroller.forceFinished(true);
-        this.activeGesture = true;
-        this.onPageScrollStateChanged('dragging');
-    }
-
-    onResponderMove (evt, gestureState) {
-        let dx = gestureState.moveX - gestureState.previousMoveX;
-        this.scrollByOffset(dx);
-    }
-
-    onResponderRelease (evt, gestureState, disableSettle) {
-        this.activeGesture = false;
-        if (!disableSettle) {
-            this.settlePage(gestureState.vx);
-        }
-    }
-
-    onPageChanged (page) {
-        if (this.currentPage !== page) {
-            this.currentPage = page;
-            this.props.onPageSelected && this.props.onPageSelected(page);
-        }
-    }
-
-    onPageScrollStateChanged (state) {
-        this.props.onPageScrollStateChanged && this.props.onPageScrollStateChanged(state);
-    }
-
-    settlePage (vx) {
-        const { pageDataArray } = this.props;
-
-        if (vx < -MIN_FLING_VELOCITY) {
-            if (this.currentPage < pageDataArray.length - 1) {
-                this.flingToPage(this.currentPage + 1, vx);
-            } else {
-                this.flingToPage(pageDataArray.length - 1, vx);
-            }
-        } else if (vx > MIN_FLING_VELOCITY) {
-            if (this.currentPage > 0) {
-                this.flingToPage(this.currentPage - 1, vx);
-            } else {
-                this.flingToPage(0, vx);
-            }
-        } else {
-            let page = this.currentPage;
-            let progress = (this.scroller.getCurrX() - this.getScrollOffsetOfPage(this.currentPage)) / this.state.width;
-            if (progress > 1 / 3) {
-                page += 1;
-            } else if (progress < -1 / 3) {
-                page -= 1;
-            }
-            page = Math.min(pageDataArray.length - 1, page);
-            page = Math.max(0, page);
-            this.scrollToPage(page);
-        }
-    }
-
-    getScrollOffsetOfPage (page) {
-        return this.getItemLayout(this.props.pageDataArray, page).offset;
-    }
-
-    flingToPage (page, velocityX) {
-        this.onPageScrollStateChanged('settling');
-
-        page = this.validPage(page);
-        this.onPageChanged(page);
-
-        velocityX *= -1000; // per sec
-        const finalX = this.getScrollOffsetOfPage(page);
-        this.scroller.fling(this.scroller.getCurrX(), 0, velocityX, 0, finalX, finalX, 0, 0);
-    }
-
-    scrollToPage (page, immediate) {
-        this.onPageScrollStateChanged('settling');
-
-        page = this.validPage(page);
-        this.onPageChanged(page);
-
-        const finalX = this.getScrollOffsetOfPage(page);
-        if (immediate) {
-            InteractionManager.runAfterInteractions(() => {
-                this.scroller.startScroll(this.scroller.getCurrX(), 0, finalX - this.scroller.getCurrX(), 0, 0);
-                this.innerFlatList.current && this.innerFlatList.current.scrollToOffset({offset: finalX, animated: false});
-                this.innerFlatList.current && this.innerFlatList.current.recordInteraction();
-            });
-        } else {
-            this.scroller.startScroll(this.scroller.getCurrX(), 0, finalX - this.scroller.getCurrX(), 0, 400);
-        }
-    }
-
-    scrollByOffset (dx) {
-        this.scroller.startScroll(this.scroller.getCurrX(), 0, -dx, 0, 0);
-    }
-
-    validPage (page) {
-        page = Math.min(this.props.pageDataArray.length - 1, page);
-        page = Math.max(0, page);
-        return page;
-    }
-
-    getScrollOffsetFromCurrentPage () {
-        return this.scroller.getCurrX() - this.getScrollOffsetOfPage(this.currentPage);
-    }
-
-    getItemLayout (data, index) {
-        // this method is called 'getItemLayout', but it is not actually used
-        // as the 'getItemLayout' function for the FlatList. We use it within
-        // the code on this page though. The reason for this is that working
-        // with 'getItemLayout' for FlatList is buggy. You might end up with
-        // unrendered / missing content. Therefore we work around it, as
-        // described here
-        // https://github.com/facebook/react-native/issues/15734#issuecomment-330616697
-        return {
-            length: this.state.width + this.props.pageMargin,
-            offset: (this.state.width + this.props.pageMargin) * index,
-            index
-        };
-    }
-
-    keyExtractor (item, index) {
-        return `page-${index}`;
-    }
-
-    renderRow ({ item, index }) {
-        const { width, height } = this.state;
-        let page = this.props.renderPage(item, index);
-
-        const layout = {
-            width,
-            height,
-            position: 'relative'
-        };
-        const style = page.props.style ? [page.props.style, layout] : layout;
-
-        let newProps = { ...page.props, ref: page.ref, style };
-        const element = React.createElement(page.type, newProps);
-
-        if (this.props.pageMargin > 0 && index > 0) {
-            // Do not using margin style to implement pageMargin.
-            // The ListView seems to calculate a wrong width for children views with margin.
-            return (
-                <View style={{
-                    width: width + this.props.pageMargin,
-                    height: height,
-                    alignItems: 'flex-end'
-                }}>
-                    { element }
-                </View>
-            );
-        } else {
-            return element;
-        }
+    componentWillUnmount () {
+        this.cancelAnimation();
     }
 
     render () {
-        const { width, height } = this.state;
-        const { pageDataArray, scrollEnabled, style, scrollViewStyle } = this.props;
-
-        if (width && height) {
-            let list = pageDataArray;
-            if (!list) {
-                list = [];
-            }
-        }
-
         let gestureResponder = this.gestureResponder;
-        if (!scrollEnabled || pageDataArray.length <= 0) {
+        if (!this.props.enableTransform) {
             gestureResponder = {};
         }
 
         return (
             <View
-              {...this.props}
-              style={[style, { flex: 1 }]}
-              {...gestureResponder}>
-                <FlatList
-                  {...this.props.flatListProps}
-                  style={[{ flex: 1 }, scrollViewStyle]}
-                  ref={this.innerFlatList}
-                  keyExtractor={this.keyExtractor}
-                  scrollEnabled={false}
-                  horizontal={true}
-                  data={pageDataArray}
-                  renderItem={this.renderRow}
-                  onLayout={this.onLayout}
-
-                  // use contentOffset instead of initialScrollIndex so that we don't have
-                  // to use the buggy 'getItemLayout' prop. See
-                  // https://github.com/facebook/react-native/issues/15734#issuecomment-330616697 and
-                  // https://github.com/facebook/react-native/issues/14945#issuecomment-354651271
-                  contentOffset = {{x: this.getScrollOffsetOfPage(parseInt(this.props.initialPage)), y:0}}
-              />
+                testID={'image-mask'}
+                {...this.props}
+                {...gestureResponder}
+                ref={this.innerViewRef}
+                onLayout={this.onLayout}>
+                <View
+                    testID={'image-mask'}
+                    style={{
+                        flex: 1,
+                        justifyContent: 'center',
+                        transform: [
+                            { scale: this.state.scale },
+                            { translateX: this.state.translateX },
+                            { translateY: this.state.translateY }
+                        ]
+                    }}>
+                    { this.props.children }
+                </View>
             </View>
         );
+    }
+
+    onLayout (e) {
+        const {width, height} = e.nativeEvent.layout;
+        if (width !== this.state.width || height !== this.state.height) {
+            this.setState({width, height});
+        }
+        this.measureLayout();
+
+        this.props.onLayout && this.props.onLayout(e);
+    }
+
+    measureLayout () {
+        this.innerViewRef.current.measure((x, y, width, height, pageX, pageY) => {
+            if (typeof pageX === 'number' && typeof pageY === 'number') { // avoid undefined values on Android devices
+                if (this.state.pageX !== pageX || this.state.pageY !== pageY) {
+                    this.setState({ pageX: pageX, pageY: pageY });
+                }
+            }
+        });
+    }
+
+    onResponderGrant (evt, gestureState) {
+        this.props.onTransformStart && this.props.onTransformStart();
+        this.setState({responderGranted: true});
+        this.measureLayout();
+    }
+
+    onResponderMove (evt, gestureState) {
+        this.cancelAnimation();
+
+        let dx = gestureState.moveX - gestureState.previousMoveX;
+        let dy = gestureState.moveY - gestureState.previousMoveY;
+        if (this.props.enableResistance) {
+            let d = this.applyResistance(dx, dy);
+            dx = d.dx;
+            dy = d.dy;
+        }
+
+        if (!this.props.enableTranslate) {
+            dx = dy = 0;
+        }
+
+        let transform = {};
+        if (gestureState.previousPinch && gestureState.pinch && this.props.enableScale) {
+            let scaleBy = gestureState.pinch / gestureState.previousPinch;
+            let pivotX = gestureState.moveX - this.state.pageX;
+            let pivotY = gestureState.moveY - this.state.pageY;
+
+            let rect = transformedRect(
+                transformedRect(
+                    this.contentRect(),
+                    this.currentTransform()
+                ),
+                new Transform(scaleBy, dx, dy, { x: pivotX, y: pivotY })
+            );
+            transform = getTransform(this.contentRect(), rect);
+        } else {
+            if (Math.abs(dx) > 2 * Math.abs(dy)) {
+                dy = 0;
+            } else if (Math.abs(dy) > 2 * Math.abs(dx)) {
+                dx = 0;
+            }
+            transform.translateX = this.state.translateX + dx / this.state.scale;
+            transform.translateY = this.state.translateY + dy / this.state.scale;
+        }
+
+        this.updateTransform(transform);
+        return true;
+    }
+
+    onResponderRelease (evt, gestureState) {
+        let handled = this.props.onTransformGestureReleased && this.props.onTransformGestureReleased({
+            scale: this.state.scale,
+            translateX: this.state.translateX,
+            translateY: this.state.translateY
+        });
+        // if (handled) {
+        //     return;
+        // }
+
+        if (gestureState.doubleTapUp) {
+            if (!this.props.enableScale) {
+                this.animateBounce();
+                return;
+            }
+            let pivotX = 0;
+            let pivotY = 0;
+            if (gestureState.dx || gestureState.dy) {
+                pivotX = gestureState.moveX - this.state.pageX;
+                pivotY = gestureState.moveY - this.state.pageY;
+            } else {
+                pivotX = gestureState.x0 - this.state.pageX;
+                pivotY = gestureState.y0 - this.state.pageY;
+            }
+
+            this.performDoubleTapUp(pivotX, pivotY);
+        } else {
+            if (this.props.enableTranslate) {
+                this.performFling(gestureState.vx, gestureState.vy);
+            } else {
+                this.animateBounce();
+            }
+        }
+    }
+
+    performFling (vx, vy) {
+        let startX = 0;
+        let startY = 0;
+        let maxX, minX, maxY, minY;
+        let availablePanDistance = availableTranslateSpace(this.transformedContentRect(), this.viewPortRect());
+        if (vx > 0) {
+            minX = 0;
+            if (availablePanDistance.left > 0) {
+                maxX = availablePanDistance.left + this.props.maxOverScrollDistance;
+            } else {
+                maxX = 0;
+            }
+        } else {
+            maxX = 0;
+            if (availablePanDistance.right > 0) {
+                minX = -availablePanDistance.right - this.props.maxOverScrollDistance;
+            } else {
+                minX = 0;
+            }
+        }
+        if (vy > 0) {
+            minY = 0;
+            if (availablePanDistance.top > 0) {
+                maxY = availablePanDistance.top + this.props.maxOverScrollDistance;
+            } else {
+                maxY = 0;
+            }
+        } else {
+            maxY = 0;
+            if (availablePanDistance.bottom > 0) {
+                minY = -availablePanDistance.bottom - this.props.maxOverScrollDistance;
+            } else {
+                minY = 0;
+            }
+        }
+
+        vx *= 1000; // per second
+        vy *= 1000;
+        if (Math.abs(vx) > 2 * Math.abs(vy)) {
+            vy = 0;
+        } else if (Math.abs(vy) > 2 * Math.abs(vx)) {
+            vx = 0;
+        }
+
+        this.scroller.fling(startX, startY, vx, vy, minX, maxX, minY, maxY);
+    }
+
+    performDoubleTapUp (pivotX, pivotY) {
+        let curScale = this.state.scale;
+        let scaleBy;
+        if (curScale > (1 + this.props.maxScale) / 2) {
+            scaleBy = 1 / curScale;
+        } else {
+            scaleBy = this.props.maxScale / curScale;
+        }
+
+        let rect = transformedRect(
+            this.transformedContentRect(),
+            new Transform(scaleBy, 0, 0, { x: pivotX, y: pivotY })
+        );
+        rect = transformedRect(
+            rect,
+            new Transform(
+                1,
+                this.viewPortRect().centerX() - pivotX,
+                this.viewPortRect().centerY() - pivotY
+            )
+        );
+        rect = alignedRect(rect, this.viewPortRect());
+        this.animate(rect);
+    }
+
+    applyResistance (dx, dy) {
+        let availablePanDistance = availableTranslateSpace(this.transformedContentRect(), this.viewPortRect());
+
+        if ((dx > 0 && availablePanDistance.left < 0) ||
+            (dx < 0 && availablePanDistance.right < 0)) {
+            dx /= 3;
+        }
+        if ((dy > 0 && availablePanDistance.top < 0) ||
+            (dy < 0 && availablePanDistance.bottom < 0)) {
+            dy /= 3;
+        }
+        return { dx, dy };
+    }
+
+    cancelAnimation () {
+        this.state.animator.stopAnimation();
+    }
+
+    animate (targetRect, durationInMillis) {
+        let duration = 200;
+        if (durationInMillis) {
+            duration = durationInMillis;
+        }
+
+        let fromRect = this.transformedContentRect();
+        if (fromRect.equals(targetRect, 0.01)) {
+            return;
+        }
+
+        this.state.animator.removeAllListeners();
+        this.state.animator.setValue(0);
+        this.state.animator.addListener((state) => {
+            let progress = state.value;
+
+            let left = fromRect.left + (targetRect.left - fromRect.left) * progress;
+            let right = fromRect.right + (targetRect.right - fromRect.right) * progress;
+            let top = fromRect.top + (targetRect.top - fromRect.top) * progress;
+            let bottom = fromRect.bottom + (targetRect.bottom - fromRect.bottom) * progress;
+
+            let transform = getTransform(this.contentRect(), new Rect(left, top, right, bottom));
+            this.updateTransform(transform);
+        });
+
+        Animated.timing(
+            this.state.animator,
+            {
+                toValue: 1,
+                duration: duration,
+                easing: Easing.inOut(Easing.ease),
+                useNativeDriver: true
+            }
+        ).start();
+    }
+
+    animateBounce () {
+        let curScale = this.state.scale;
+        let minScale = 1;
+        let maxScale = this.props.maxScale;
+        let scaleBy = 1;
+        if (curScale > maxScale) {
+            scaleBy = maxScale / curScale;
+        } else if (curScale < minScale) {
+            scaleBy = minScale / curScale;
+        }
+
+        let rect = transformedRect(
+            this.transformedContentRect(),
+            new Transform(
+                scaleBy,
+                0,
+                0,
+                {
+                    x: this.viewPortRect().centerX(),
+                    y: this.viewPortRect().centerY()
+                }
+            )
+        );
+        rect = alignedRect(rect, this.viewPortRect());
+        this.animate(rect);
+    }
+
+    updateTransform (transform) {
+        this.setState(transform);
+    }
+
+    forceUpdateTransform (transform) {
+        this.setState(transform);
+    }
+
+    getAvailableTranslateSpace () {
+        return availableTranslateSpace(this.transformedContentRect(), this.viewPortRect());
     }
 }

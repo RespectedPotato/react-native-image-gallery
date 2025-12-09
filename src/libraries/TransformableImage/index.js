@@ -1,5 +1,5 @@
 import React, { PureComponent } from 'react';
-import { View, Text, Image } from 'react-native';
+import { View, Text, Image, ViewStyle, Dimensions } from 'react-native';
 import { ViewPropTypes } from 'deprecated-react-native-prop-types';
 import PropTypes from 'prop-types';
 import ViewTransformer from '../ViewTransformer';
@@ -13,7 +13,7 @@ export default class TransformableImage extends PureComponent {
             ]).isRequired,
             dimensions: PropTypes.shape({ width: PropTypes.number, height: PropTypes.number })
         }).isRequired,
-        style: ViewPropTypes ? ViewPropTypes.style : View.propTypes.style,
+        style: ViewPropTypes ? ViewPropTypes.style : ViewStyle,
         onLoad: PropTypes.func,
         onLoadStart: PropTypes.func,
         enableTransform: PropTypes.bool,
@@ -23,7 +23,8 @@ export default class TransformableImage extends PureComponent {
         onViewTransformed: PropTypes.func,
         imageComponent: PropTypes.func,
         resizeMode: PropTypes.string,
-        errorComponent: PropTypes.func
+        errorComponent: PropTypes.func,
+        maxScale: PropTypes.number
     };
 
     static defaultProps = {
@@ -138,7 +139,7 @@ export default class TransformableImage extends PureComponent {
     renderError () {
         return (this.props.errorComponent && this.props.errorComponent()) || (
             <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
-                 <Text style={{ color: 'white', fontSize: 15, fontStyle: 'italic' }}>This image cannot be displayed...</Text>
+                <Text style={{ color: 'white', fontSize: 15, fontStyle: 'italic' }}>This image cannot be displayed...</Text>
             </View>
         );
     }
@@ -147,7 +148,7 @@ export default class TransformableImage extends PureComponent {
         const { imageDimensions, viewWidth, viewHeight, error, keyAccumulator, imageLoaded } = this.state;
         const { style, image, imageComponent, resizeMode, enableTransform, enableScale, enableTranslate, onTransformGestureReleased, onViewTransformed } = this.props;
 
-        let maxScale = 1;
+        let maxScale = this.props.maxScale;
         let contentAspectRatio;
         let width, height; // imageDimensions
 
@@ -158,18 +159,18 @@ export default class TransformableImage extends PureComponent {
 
         if (width && height) {
             contentAspectRatio = width / height;
-            if (viewWidth && viewHeight) {
-                maxScale = Math.max(width / viewWidth, height / viewHeight);
-                maxScale = Math.max(1, maxScale);
-            }
+            // if (viewWidth && viewHeight) {
+            //     maxScale = Math.max(width / viewWidth, height / viewHeight);
+            //     maxScale = Math.max(1, maxScale);
+            // }
         }
 
         const imageProps = {
             ...this.props,
             imageLoaded,
             source: image.source,
-            style: [style, { backgroundColor: 'transparent' }],
-            resizeMode: resizeMode,
+            style: [style, { backgroundColor: 'transparent', width: Dimensions.get('screen').width, height: Dimensions.get('screen').width }],
+            resizeMode: 'resize',
             onLoadStart: this.onLoadStart,
             onLoad: this.onLoad,
             capInsets: { left: 0.1, top: 0.1, right: 0.1, bottom: 0.1 }
@@ -179,18 +180,18 @@ export default class TransformableImage extends PureComponent {
 
         return (
             <ViewTransformer
-              ref={this.viewTransformer}
-              key={'viewTransformer#' + keyAccumulator} // when image source changes, we should use a different node to avoid reusing previous transform state
-              enableTransform={enableTransform && imageLoaded} // disable transform until image is loaded
-              enableScale={enableScale}
-              enableTranslate={enableTranslate}
-              enableResistance={true}
-              onTransformGestureReleased={onTransformGestureReleased}
-              onViewTransformed={onViewTransformed}
-              maxScale={maxScale}
-              contentAspectRatio={contentAspectRatio}
-              onLayout={this.onLayout}
-              style={style}>
+                ref={this.viewTransformer}
+                key={'viewTransformer#' + keyAccumulator} // when image source changes, we should use a different node to avoid reusing previous transform state
+                enableTransform={enableTransform && imageLoaded} // disable transform until image is loaded
+                enableScale={enableScale}
+                enableTranslate={enableTranslate}
+                enableResistance={true}
+                onTransformGestureReleased={onTransformGestureReleased}
+                onViewTransformed={onViewTransformed}
+                maxScale={maxScale}
+                contentAspectRatio={contentAspectRatio}
+                onLayout={this.onLayout}
+                style={style}>
                 { error ? this.renderError() : content }
             </ViewTransformer>
         );
