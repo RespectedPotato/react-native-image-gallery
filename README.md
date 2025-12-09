@@ -10,7 +10,7 @@
   - [Props](#props)
   - [Scroll state and events](#scroll-state-and-events)
 
->This repo was [forked](https://github.com/allsquare/react-native-image-gallery)!  Special thanks to all who contributed!
+>This used to be a fork of [ldn0x7dc/react-native-gallery](https://github.com/ldn0x7dc/react-native-gallery) but the original repo is no longer maintained, so here's our own repo. Props to [ldn0x7dc](https://github.com/ldn0x7dc) for his amazing work! 👏👏👏
 
 A pure JavaScript image gallery component for React Native apps with common gestures like pan, pinch and doubleTap, supporting both iOS and Android.
 
@@ -25,6 +25,7 @@ This component works on react-native **0.44+**.
 
 You can try this example live in **Archriss' showcase app** on [Android](https://play.google.com/store/apps/details?id=fr.archriss.demo.app) and [iOS](https://itunes.apple.com/lu/app/archriss-presentation-mobile/id1180954376?mt=8) or check out the demo.
 
+![react-native-image-gallery](https://media.giphy.com/media/3o7bugPvJyqYWz9bK8/giphy.gif)
 
 ## Install
 
